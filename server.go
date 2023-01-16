@@ -13,8 +13,7 @@ func main() {
 	} else {
 		dir, _ = os.Getwd()
 	}
-	fmt.Print(dir)
-	// liveServer := http.FileServer(dir)
-	// fmt.Println("Listening on port 8080")
-	// log.Fatal(http.ListenAndServe(":8080", liveServer))
+	liveServer := http.FileServer(dir)
+	fmt.Println("Listening on port 8080")
+	log.Fatal(http.ListenAndServe(":8080", liveServer))
 }
