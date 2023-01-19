@@ -1,1 +1,3 @@
 Simple live server using golang. For my personal webdev projects.
+
+Branch file_watcher is for watching the project directory and the files in the directory, and restarting the server if there are changes. 
