@@ -1,3 +1,6 @@
+// failing when a file is removed from directory
+// stops the server, and then fails when trying to restart
+// 	probably something to do with the next call to startServer()
 package main
 
 import (
@@ -30,6 +33,44 @@ func watchFile(filePath string, changed chan bool) {
 	changed <- true
 }
 
+func addWatchers(dir string, c chan bool) {
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		go watchFile(path, c)
+
+		return nil
+	})
+
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func startServer(dir string) {
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: http.FileServer(http.Dir(dir)),
+	}
+
+	log.Println("Listening on port 8080")
+
+	doneChan := make(chan bool)
+
+	go func() {
+		if err := server.ListenAndServe(); err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	go addWatchers(dir, doneChan)
+	<-doneChan
+
+	log.Println("Restarting due to changes")
+}
+
 func main() {
 	var dir string
 
@@ -38,31 +79,6 @@ func main() {
 	} else {
 		dir, _ = os.Getwd()
 	}
-	liveServer := http.FileServer(http.Dir(dir))
-	log.Println("Listening on port 8080")
 
-	go func() { log.Fatal(http.ListenAndServe(":8080", liveServer)) }()
-
-	doneChan := make(chan bool)
-
-	go func(doneChan chan bool) {
-		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			go watchFile(path, doneChan)
-
-			return nil
-		})
-
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		// <-changed
-	}(doneChan)
-
-	<-doneChan
-	log.Println("Restarting due to changes")
+	startServer(dir)
 }
