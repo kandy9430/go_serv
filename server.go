@@ -1,5 +1,5 @@
 // dotfiles are ignored, but it will still restart when a new dotfile is created or removed
-package main
+package go_serv
 
 import (
 	"context"
@@ -186,7 +186,7 @@ func killServer(srv *http.Server) {
 	}
 }
 
-func main() {
+func Serve() {
 	var dir string
 	if len(os.Args) > 1 {
 		dir = os.Args[1]
