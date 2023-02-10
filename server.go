@@ -149,12 +149,6 @@ func startServer() {
 		<-doneChan
 
 		killServer(srv)
-		// ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		// defer cancel()
-
-		// if err := srv.Shutdown(ctx); err != nil {
-		// 	log.Printf("Error stopping server: %v\n", err)
-		// }
 		close(restart)
 	}()
 
@@ -166,12 +160,6 @@ func startServer() {
 		<-interrupt
 
 		killServer(srv)
-		// ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		// defer cancel()
-
-		// if err := srv.Shutdown(ctx); err != nil {
-		// 	log.Printf("Error stopping server: %v\n", err)
-		// }
 		close(shutdown)
 	}()
 
