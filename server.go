@@ -1,6 +1,4 @@
 // dotfiles are ignored, but it will still restart when a new dotfile is created or removed
-// should probably also add graceful shutdown
-// need to set up FileServer to ignore dotfiles. This is in the docs
 package main
 
 import (
@@ -9,19 +7,72 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
 )
 
-// creates a simple server
-// would like to add functionality to ignore .dotfiles
+// creates a simple server that ignores dotfiles
 func createServer() *http.Server {
 	return &http.Server{
 		Addr:    ":8080",
-		Handler: http.FileServer(http.Dir(os.Getenv("DIR"))),
+		Handler: http.FileServer(dotFileHidingFileSystem{http.Dir(os.Getenv("DIR"))}),
 	}
+}
+
+// containsDotFile reports whether name contains a path element starting with a period.
+// The name is assumed to be a delimited by forward slashes, as guaranteed
+// by the http.FileSystem interface.
+func containsDotFile(name string) bool {
+	parts := strings.Split(name, "/")
+	for _, part := range parts {
+		if strings.HasPrefix(part, ".") {
+			return true
+		}
+	}
+	return false
+}
+
+// dotFileHidingFile is the http.File use in dotFileHidingFileSystem.
+// It is used to wrap the Readdir method of http.File so that we can
+// remove files and directories that start with a period from its output.
+type dotFileHidingFile struct {
+	http.File
+}
+
+// Readdir is a wrapper around the Readdir method of the embedded File
+// that filters out all files that start with a period in their name.
+func (f dotFileHidingFile) Readdir(n int) (fis []fs.FileInfo, err error) {
+	files, err := f.File.Readdir(n)
+	for _, file := range files { // Filters out the dot files
+		if !strings.HasPrefix(file.Name(), ".") {
+			fis = append(fis, file)
+		}
+	}
+	return
+}
+
+// dotFileHidingFileSystem is an http.FileSystem that hides
+// hidden "dot files" from being served.
+type dotFileHidingFileSystem struct {
+	http.FileSystem
+}
+
+// Open is a wrapper around the Open method of the embedded FileSystem
+// that serves a 403 permission error when name has a file or directory
+// with whose name starts with a period in its path.
+func (fsys dotFileHidingFileSystem) Open(name string) (http.File, error) {
+	if containsDotFile(name) { // If dot file, return 403 response
+		return nil, fs.ErrPermission
+	}
+
+	file, err := fsys.FileSystem.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return dotFileHidingFile{file}, err
 }
 
 // watches an individual file for changes.
@@ -85,33 +136,66 @@ func isDotFile(name string) bool {
 // sets up watchers for the directory
 // calls Shutdown() on server if files change
 // recursive call to startServer() to restart the server
-// need to add graceful shutdown
 func startServer() {
 	srv := createServer()
 	log.Printf("Listening on port %v\n", srv.Addr)
 
-	idleConnsClosed := make(chan struct{})
+	// for restarting server when there are changes to files
+	restart := make(chan struct{})
 	go func() {
 		doneChan := make(chan bool)
+
 		go addWatchers(doneChan)
 		<-doneChan
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+		killServer(srv)
+		// ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// defer cancel()
 
-		if err := srv.Shutdown(ctx); err != nil {
-			log.Printf("Error restarting server: %v\n", err)
-		}
-		log.Printf("Server restarted")
-		close(idleConnsClosed)
+		// if err := srv.Shutdown(ctx); err != nil {
+		// 	log.Printf("Error stopping server: %v\n", err)
+		// }
+		close(restart)
+	}()
+
+	// for graceful shutdown upon Sigint
+	shutdown := make(chan struct{})
+	go func() {
+		interrupt := make(chan os.Signal, 1)
+		signal.Notify(interrupt, os.Interrupt)
+		<-interrupt
+
+		killServer(srv)
+		// ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// defer cancel()
+
+		// if err := srv.Shutdown(ctx); err != nil {
+		// 	log.Printf("Error stopping server: %v\n", err)
+		// }
+		close(shutdown)
 	}()
 
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("Error starting or closing server: %v\n", err)
 	}
-	<-idleConnsClosed
 
-	startServer()
+	// either restart or shutdown server depending on what channel is closed
+	select {
+	case <-restart:
+		log.Printf("Server restarted")
+		startServer()
+	case <-shutdown:
+		log.Printf("Server stopped")
+	}
+}
+
+func killServer(srv *http.Server) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("Error stopping server: %v\n", err)
+	}
 }
 
 func main() {
