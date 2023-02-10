@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"io/fs"
 	"log"
 	"net/http"
@@ -11,6 +12,13 @@ import (
 	"path/filepath"
 	"time"
 )
+
+func createServer() *http.Server {
+	return &http.Server{
+		Addr:    ":8080",
+		Handler: http.FileServer(http.Dir(os.Getenv("DIR"))),
+	}
+}
 
 func watchFile(filePath string, changed chan bool) {
 	log.Printf("watching: %s\n", filePath)
@@ -49,36 +57,85 @@ func addWatchers(dir string, c chan bool) {
 	}
 }
 
-func startServer(dir string) {
-	server := &http.Server{
-		Addr:    ":8080",
-		Handler: http.FileServer(http.Dir(dir)),
-	}
+// func startServer(dir string) {
+// 	srv := createServer()
+//
+// 	log.Println("Listening on port 8080")
+//
+// 	doneChan := make(chan bool)
+//
+// 	go func() {
+// 		if err := server.ListenAndServe(); err != nil {
+// 			log.Fatal(err)
+// 		}
+// 	}()
+//
+// 	go addWatchers(dir, doneChan)
+// 	<-doneChan
+//
+// 	log.Println("Restarting due to changes")
+// }
 
-	log.Println("Listening on port 8080")
+func startServer() {
+	srv := createServer()
+	log.Printf("Listening on port %v\n", srv.Addr)
 
-	doneChan := make(chan bool)
-
+	idleConnsClosed := make(chan struct{})
 	go func() {
-		if err := server.ListenAndServe(); err != nil {
-			log.Fatal(err)
+		// stop := make(chan os.Signal, 1)
+		// signal.Notify(stop, os.Interrupt)
+
+		// <-stop
+
+		doneChan := make(chan bool)
+		go addWatchers(dir, doneChan)
+		<-doneChan
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("Error restarting server: %v\n", err)
 		}
+		log.Printf("Server restarted")
+		close(idleConnsClosed)
 	}()
 
-	go addWatchers(dir, doneChan)
-	<-doneChan
+	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+		log.Fatalf("Error starting or closing server: %v\n", err)
+	}
+	<-idleConnsClosed
 
-	log.Println("Restarting due to changes")
+	startServer()
 }
+
+// func watchForInterrupt(srv *http.Server) {
+// 	stop := make(chan os.Signal, 1)
+// 	signal.Notify(stop, os.Interrupt)
+//
+// 	<-stop
+//
+// 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// 	defer cancel()
+//
+// 	if err := srv.Shutdown(ctx); err != nil {
+// 		log.Fatal(err)
+// 	}
+// 	log.Println("Server restarted")
+// 	// true ->c
+// }
 
 func main() {
 	var dir string
-
 	if len(os.Args) > 1 {
 		dir = os.Args[1]
 	} else {
 		dir, _ = os.Getwd()
 	}
 
-	startServer(dir)
+	if err := os.Setenv("DIR", dir); err != nil {
+		log.Fatal(err)
+	}
+
+	startServer()
 }
