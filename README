@@ -1,1 +1,5 @@
 Simple live server using golang. For my personal webdev projects.
+
+This branch was to add auto-reload feature to restart the server. It has since been merged with file_watcher branch to auto-reload the server when there are changes to files being watched. 
+
+Keeping branch around for now in case there are any bugs that need to be tested later. 
